@@ -1,0 +1,203 @@
+function [gbest, bestfit, ConvCurve] = LNE_GWO(Fun, dim, lb, ub, N, MaxIter)
+T_ep    = 100;
+beta_lv = 1.5;
+eta     = 0.1;
+k_lens  = 2.5;
+if ~isa(Fun, 'function_handle')
+    error('Fun must be a function handle.');
+end
+
+if dim < 1 || N < 3 || MaxIter < 1
+    error('Invalid dimension, population size, or iteration number.');
+end
+
+lb = lb(:)';
+ub = ub(:)';
+
+if isscalar(lb)
+    lb = repmat(lb, 1, dim);
+end
+
+if isscalar(ub)
+    ub = repmat(ub, 1, dim);
+end
+
+if numel(lb) ~= dim || numel(ub) ~= dim
+    error('The dimensions of lb and ub must match dim.');
+end
+
+if any(lb >= ub)
+    error('Each lower bound must be smaller than its upper bound.');
+end
+
+sigma = (gamma(1 + beta_lv) * sin(pi * beta_lv / 2) / ...
+        (gamma((1 + beta_lv) / 2) * beta_lv * ...
+        2^((beta_lv - 1) / 2)))^(1 / beta_lv);
+X = lb + rand(N, dim) .* (ub - lb);
+
+O = (lb + ub) / 2;
+
+X_opp = zeros(N, dim);
+
+for j = 1:dim
+    X_opp(:, j) = O(j) + O(j) / k_lens ...
+                  - X(:, j) / k_lens;
+end
+
+X_opp = max(min(X_opp, ub), lb);
+
+X_all = [X; X_opp];
+
+fit_all = zeros(2 * N, 1);
+
+for i = 1:2 * N
+    fit_all(i) = evaluate_fitness(Fun, X_all(i, :));
+end
+
+[~, sortIdx] = sort(fit_all, 'ascend');
+
+X = X_all(sortIdx(1:N), :);
+fit = fit_all(sortIdx(1:N));
+
+[~, sortIdx] = sort(fit, 'ascend');
+
+Alpha = X(sortIdx(1), :);
+fAlpha = fit(sortIdx(1));
+
+Beta = X(sortIdx(2), :);
+fBeta = fit(sortIdx(2));
+
+Delta = X(sortIdx(3), :);
+fDelta = fit(sortIdx(3));
+
+Best = Alpha;
+fBest = fAlpha;
+
+ConvCurve = zeros(MaxIter, 1);
+
+for t = 1:MaxIter
+
+    tau = t / MaxIter;
+    a = 2 - 2 * tau;
+
+    wa_raw = 0.5 + 0.4 * tau^2;
+    wb_raw = 0.3 * (1 - 0.5 * tau^2);
+    wd_raw = 0.2 * (1 - tau^2);
+
+    weight_sum = wa_raw + wb_raw + wd_raw;
+
+    wa = wa_raw / weight_sum;
+    wb = wb_raw / weight_sum;
+    wd = wd_raw / weight_sum;
+
+    for i = 1:N
+
+        r1 = rand(1, dim);
+        r2 = rand(1, dim);
+
+        A1 = 2 * a .* r1 - a;
+        C1 = 2 * r2;
+
+        D_alpha = abs(C1 .* Alpha - X(i, :));
+        X1 = Alpha - A1 .* D_alpha;
+
+        r1 = rand(1, dim);
+        r2 = rand(1, dim);
+
+        A2 = 2 * a .* r1 - a;
+        C2 = 2 * r2;
+
+        D_beta = abs(C2 .* Beta - X(i, :));
+        X2 = Beta - A2 .* D_beta;
+
+        r1 = rand(1, dim);
+        r2 = rand(1, dim);
+
+        A3 = 2 * a .* r1 - a;
+        C3 = 2 * r2;
+
+        D_delta = abs(C3 .* Delta - X(i, :));
+        X3 = Delta - A3 .* D_delta;
+
+        X(i, :) = wa .* X1 + wb .* X2 + wd .* X3;
+
+        X(i, :) = max(min(X(i, :), ub), lb);
+
+    end
+
+    for i = 1:N
+        fit(i) = evaluate_fitness(Fun, X(i, :));
+    end
+
+    [~, sortIdx] = sort(fit, 'ascend');
+
+    if fit(sortIdx(1)) < fAlpha
+        fAlpha = fit(sortIdx(1));
+        Alpha = X(sortIdx(1), :);
+    end
+
+    if fit(sortIdx(2)) < fBeta
+        fBeta = fit(sortIdx(2));
+        Beta = X(sortIdx(2), :);
+    end
+
+    if fit(sortIdx(3)) < fDelta
+        fDelta = fit(sortIdx(3));
+        Delta = X(sortIdx(3), :);
+    end
+
+    if fAlpha < fBest
+        fBest = fAlpha;
+        Best = Alpha;
+    end
+
+    if mod(t, T_ep) == 0
+
+        u = randn(1, dim) * sigma;
+        v = randn(1, dim);
+
+        L = u ./ (abs(v).^(1 / beta_lv));
+
+        S_ep = (ub - lb) .* eta .* (1 - tau);
+
+        X_p = Best + S_ep .* L;
+
+        X_p = max(min(X_p, ub), lb);
+
+        f_p = evaluate_fitness(Fun, X_p);
+
+        if f_p < fBest
+
+            fBest = f_p;
+            Best = X_p;
+
+            fAlpha = f_p;
+            Alpha = X_p;
+
+        end
+
+    end
+
+    ConvCurve(t) = fBest;
+
+end
+
+gbest = Best;
+bestfit = fBest;
+
+end
+
+function f = evaluate_fitness(Fun, x)
+
+try
+    f = Fun(x);
+
+    if ~isscalar(f) || ~isreal(f) || ~isfinite(f)
+        f = 1e10;
+    end
+
+catch
+    f = 1e10;
+end
+
+end
